@@ -155,7 +155,7 @@ final class ChatViewModel: ObservableObject {
 
         // Log to memory
         await HermesIntegration.shared.logUserMessage(text, in: sessionId)
-        Kairos.shared.userDidAct()
+        await Kairos.shared.userDidAct()
 
         // Learn facts and interests from this message
         learnFromMessage(text)
@@ -575,8 +575,7 @@ struct MessageBubble: View {
         if message.isSamanthaThought {
             SamanthaThoughtBubble(text: message.text, companion: persona.selectedCompanion)
                 .padding(.vertical, 4)
-            return
-        }
+        } else {
 
         HStack(alignment: .bottom, spacing: 8) {
             if message.role == .user { Spacer(minLength: 60) }
@@ -609,6 +608,7 @@ struct MessageBubble: View {
             }
 
             if message.role == .assistant { Spacer(minLength: 60) }
+        }
         }
     }
 

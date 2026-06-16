@@ -128,16 +128,41 @@ actor HermesInterestEngine {
     // MARK: - Light public API fetches (no auth, no tracking)
 
     private func fetchMovieHeadline() async -> String? {
-        guard let url = URL(string: "https://trailers.apple.com/trailers/home/rss/newtrailers.rss") else { return nil }
+        // Scrape BoxOfficeMojo daily top 10 for current charts
+        guard let url = URL(string: "https://www.boxofficemojo.com/daily/") else { return nil }
         guard let (data, _) = try? await session.data(from: url) else { return nil }
-        // Parse first <title> after the channel title from RSS
-        let xml = String(data: data, encoding: .utf8) ?? ""
-        let titles = xml.components(separatedBy: "<title>")
-            .dropFirst(2)   // skip channel title and first item
-            .prefix(1)
-            .compactMap { $0.components(separatedBy: "</title>").first }
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        return titles.first.map { "New trailer: \($0)" }
+        let html = String(data: data, encoding: .utf8) ?? ""
+        
+        // Parse movie titles from the daily chart table
+        // BoxOfficeMojo daily page has rows like: <td class="a-text-left mojo-field-type-title"><a href="...">Movie Title</a></td>
+        let titlePattern = try? NSRegularExpression(pattern: #"mojo-field-type-title[^>]*><a[^>]*>([^<]+)</a>"#, options: [])
+        let matches = titlePattern?.matches(in: html, options: [], range: NSRange(html.startIndex..., in: html)) ?? []
+        var titles: [String] = []
+        for match in matches.prefix(5) {
+            if let range = Range(match.range(at: 1), in: html) {
+                let title = String(html[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !title.isEmpty { titles.append(title) }
+            }
+        }
+        
+        if titles.isEmpty {
+            // Fallback: try simpler regex
+            let simplePattern = try? NSRegularExpression(pattern: #"<a[^>]*>/release/[^>]*>([^<]+)</a>"#, options: [])
+            let simpleMatches = simplePattern?.matches(in: html, options: [], range: NSRange(html.startIndex..., in: html)) ?? []
+            for match in simpleMatches.prefix(5) {
+                if let range = Range(match.range(at: 1), in: html) {
+                    let title = String(html[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !title.isEmpty && !title.contains("Box Office") { titles.append(title) }
+                }
+            }
+        }
+        
+        if let first = titles.first {
+            let top3 = Array(titles.prefix(3)).joined(separator: ", ")
+            return "Box Office #1: \(first)" + (titles.count > 1 ? " · Also trending: \(top3)" : "")
+        }
+        
+        return nil
     }
 
     private func fetchSportsHeadline(team: String?) async -> String? {

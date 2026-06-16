@@ -66,7 +66,7 @@ actor HermesLLMClient {
     ///   • Subsequent launches where consent state and key state drifted
     ///   • Key entered in Settings after skipping the provider step
     func configure() async {
-        if !await privacy.consentGiven && ClaudeAPIBridge.isConfigured {
+        if (!(await privacy.consentGiven)) && ClaudeAPIBridge.isConfigured {
             await privacy.acceptCloudAI()
         }
         if await privacy.consentGiven {
@@ -217,7 +217,9 @@ enum LLMError: Error, LocalizedError {
     case consentNotGiven
     case apiKeyMissing
     case rateLimited
+    case apiKeyExhausted      // Anthropic credits exhausted or key invalid
     case contextTooLong
+    case httpError(Int, String) // status code + message from API
 
     var errorDescription: String? {
         switch self {
@@ -225,7 +227,9 @@ enum LLMError: Error, LocalizedError {
         case .consentNotGiven:      return "AI features require your consent. See Settings → Privacy."
         case .apiKeyMissing:        return "Claude API key not set. Add it in Settings."
         case .rateLimited:          return "Too many requests. Please wait a moment."
+        case .apiKeyExhausted:      return "Your Anthropic API key has run out of credits. Please top up at console.anthropic.com and try again."
         case .contextTooLong:       return "Conversation too long. Starting a new session."
+        case .httpError(let code, let msg): return "Something went wrong (\(code)). \(msg)"
         }
     }
 }
@@ -428,7 +432,7 @@ enum ClaudeAPIBridge {
 
     private static func blockingResponse(_ request: URLRequest) async throws -> LLMResponse {
         let (data, response) = try await URLSession.shared.data(for: request)
-        try validateHTTP(response)
+        try validateHTTP(response, data: data)
 
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let content = (json["content"] as? [[String: Any]])?.first,
@@ -449,12 +453,27 @@ enum ClaudeAPIBridge {
                            provider: .claudeAPI, toolCallsRequested: toolCalls)
     }
 
-    private static func validateHTTP(_ response: URLResponse) throws {
+    private static func validateHTTP(_ response: URLResponse, data: Data? = nil) throws {
         guard let http = response as? HTTPURLResponse else { return }
         switch http.statusCode {
         case 200...299: return
         case 429: throw LLMError.rateLimited
-        default: throw LLMError.noProviderConfigured
+        case 401, 403:
+            // Anthropic returns 401/403 when API key is invalid or credits exhausted
+            let body = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+            if body.contains("credit") || body.contains("exceeded") || body.contains("exhausted") || body.contains("quota") || body.contains("balance") {
+                throw LLMError.apiKeyExhausted
+            }
+            throw LLMError.apiKeyExhausted
+        case 400:
+            let body = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+            if body.contains("credit") || body.contains("exceeded") || body.contains("exhausted") || body.contains("quota") {
+                throw LLMError.apiKeyExhausted
+            }
+            throw LLMError.httpError(400, "Bad request")
+        default:
+            let msg = data.flatMap { String(data: $0, encoding: .utf8) } ?? "HTTP \(http.statusCode)"
+            throw LLMError.httpError(http.statusCode, msg.prefix(200).description)
         }
     }
 

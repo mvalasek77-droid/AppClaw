@@ -109,7 +109,7 @@ struct CompanionPortraitView: View {
             let badgeW: CGFloat = min(w * 0.6, 120)
             let badgeRect = CGRect(x: (w - badgeW) / 2, y: h - badgeH - 10,
                                    width: badgeW, height: badgeH)
-            ctx.fill(Path(RoundedRectangle(cornerRadius: 8).path(in: badgeRect)),
+            ctx.fill(RoundedRectangle(cornerRadius: 8).path(in: badgeRect),
                      with: .color(.black.opacity(0.45)))
         }
     }
